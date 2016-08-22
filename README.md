@@ -5,54 +5,41 @@ by Roger Levy (rplevy@mit.edu)
 
 This is a brief summary of some computational analysis of the Stroop dataset presented by Rouder & Haaf.  Original `.Rmd` code is in `haaf-rouder-commentary.Rmd`.
 
-```{r load-and-clean-data,echo=F}
-### This content is from Jeff Rouder's github repo (https://github.com/PerceptionCognitionLab/data0)
-library(curl) ##You will need to load the R package "curl" to use this cleaning code
 
-##Stroop Data (Data Set 1)
-filename <- curl("https://raw.githubusercontent.com/PerceptionCognitionLab/data0/master/contexteffects/FlankerStroopSimon/LEF_stroop.csv")
-stroop <- read.csv2(filename, header=TRUE, dec=".")
-
-stroop$cond <- as.numeric(stroop$congruency)  #congruent -> 1, incongruent -> 2, neutral -> 3
-ntrial <- length(stroop[stroop$ID == stroop$ID[1], 1])
-nsub <- length(unique(stroop$ID))
-stroop$trial <- rep(1:ntrial, nsub)
-stroop$rt <- stroop$RT/1000 #rt data in seconds
-
-stroop <- stroop[stroop$rt > .2 & stroop$rt < 2, ]
-stroop <- subset(stroop, accuracy == 1 & cond != 3)
-```
 
 Fitting a linear mixed effects model using `lme4` we see that the (restricted) maximum likelihood estimate of the standard deviation of inter-subject differences in the Congruity effect (your $\eta$) is just a bit under 23ms (this is the Subj.1 random slope for Cong). A likelihood ratio test for the presence of inter-subject differences gives a reasonably similar result as the $F$-test did: rejection of the null at $p=0.036$.  (Note that the likelihood ratio test for the presence of a random effect is generally viewed as being too conservative most of the time -- e.g., Stram & Lee, 1994.)
 
-```{r fit-LMM,echo=F,cache=T}
-library(lme4)
-stroop <- droplevels(stroop)
-stroop$Subj <- with(stroop, factor(paste("S",ID)))
-stroop$Cong <- ifelse(stroop$congruency=="congruent",0.5,-0.5)
 
-m1 <- lmer(rt ~ Cong + (1|Subj) + (0 + Cong | Subj),stroop)
-m0 <- lmer(rt ~ Cong + (1|Subj),stroop)
+```
+## Loading required package: Matrix
 ```
 
-```{r show-LMM-results,echo=F}
-print(summary(m1))
-print(anova(m0,m1)) ## due to current implementation in lme4, the anova() call refit the models with ML which isn't standard practice, but in practice it makes no difference
+```
+## Loading required package: methods
+```
+
+
+```
+##  Length   Class    Mode 
+##       1 lmerMod      S4
+```
+
+```
+## Error in UseMethod("anova"): no applicable method for 'anova' applied to an object of class "lmerMod"
 ```
 
 Next, in order to get a sense of what the marginal data likelihood as a function of $\eta$ looks like, I estimated the posterior distribution on $\eta$ using `MCMCglmm`, putting a diffuse prior on $\eta$ using the method of parameter expansion.  (It should be possible to compute the likelihood conditioned on a value of $\eta$ analytically, as described e.g. in Pinheiro & Bates 2000, section 2.2.1-2.2.5, but that would be a lot more coding effort!)  The first row of graphs below presents the sampled posterior estimate for $\eta$.  Observe that the highest posterior density matches the `lme4` results above well.  As a sanity check, the second row presents the sampled posterior estimate for the standard deviation of observation-level residual error $\sigma$; this also matches the `lme4` results.  (Note that in both the `lme4` and `MCMCglmm` implementations, I intentionally excluded the possibility of correlations between the random intercept and random slope, to keep the inferential question focused strictly on the strength of evidence for a non-zero $\eta$.)
 
-```{r fit-MCMCglmm,echo=F,cache=T}
-library(MCMCglmm)
-prior <- list( R=list(V=1,n=1),
-               G=list(G1=list(V=diag(2),n=2,alpha.mu=c(0,0),alpha.V=diag(2)*1000)))
-set.seed(1)
-m.MCMCglmm <- MCMCglmm(rt ~ Cong, random=~idh(1+Cong):Subj,data=stroop,prior=prior,nitt=30000,verbose=FALSE)
+
+```
+## Loading required package: coda
 ```
 
-```{r show-MCMCglmm-results,echo=F}
-plot(sqrt(m.MCMCglmm$VCV[,2:3]))
 ```
+## Loading required package: ape
+```
+
+![plot of chunk show-MCMCglmm-results](figure/show-MCMCglmm-results-1.png)
 
 The posterior density on $\eta$ is six to ten times as high at the maximum as it is in the vicinity of zero (the precise ratio varies from run to run, mostly because not all that many samples make it right up close to zero).  Because the prior in this fit was diffuse, the posterior mostly reflects the likelihood ratio.  This interpretation comports reasonably well with the `lme4` results: $\sqrt{6}=2.44$ is not terribly far off from the difference in log likelihood between the $\eta=0$ and unconstrained-$\eta$ models fitted in `lme4`.
 
