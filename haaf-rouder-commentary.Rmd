@@ -1,0 +1,58 @@
+Commentary & analysis of http://jeffrouder.blogspot.com/2016/08/where-bayes-and-classical-inference.html by Rouder & Haaf
+=========================================================================================================================
+
+by Roger Levy
+
+This is a brief summary of some computational analysis of the Stroop dataset presented by Rouder & Haaf.
+
+```{r load-and-clean-data,echo=F}
+### This content is from Jeff Rouder's github repo (https://github.com/PerceptionCognitionLab/data0)
+library(curl) ##You will need to load the R package "curl" to use this cleaning code
+
+##Stroop Data (Data Set 1)
+filename <- curl("https://raw.githubusercontent.com/PerceptionCognitionLab/data0/master/contexteffects/FlankerStroopSimon/LEF_stroop.csv")
+stroop <- read.csv2(filename, header=TRUE, dec=".")
+
+stroop$cond <- as.numeric(stroop$congruency)  #congruent -> 1, incongruent -> 2, neutral -> 3
+ntrial <- length(stroop[stroop$ID == stroop$ID[1], 1])
+nsub <- length(unique(stroop$ID))
+stroop$trial <- rep(1:ntrial, nsub)
+stroop$rt <- stroop$RT/1000 #rt data in seconds
+
+stroop <- stroop[stroop$rt > .2 & stroop$rt < 2, ]
+stroop <- subset(stroop, accuracy == 1 & cond != 3)
+```
+
+Fitting a linear mixed effects model using `lme4` we see that the (restricted) maximum likelihood estimate of the standard deviation of inter-subject differences in the Congruity effect (your $\eta$) is just a bit under 23ms (this is the Subj.1 random slope for Cong). A likelihood ratio test for the presence of inter-subject differences gives a reasonably similar result as the $F$-test did: rejection of the null at $p=0.036$.  (Note that the likelihood ratio test for the presence of a random effect is generally viewed as being too conservative most of the time -- e.g., Stram & Lee, 1994.)
+
+```{r fit-LMM,echo=F,cache=T}
+library(lme4)
+stroop <- droplevels(stroop)
+stroop$Subj <- with(stroop, factor(paste("S",ID)))
+stroop$Cong <- ifelse(stroop$congruency=="congruent",0.5,-0.5)
+
+m1 <- lmer(rt ~ Cong + (1|Subj) + (0 + Cong | Subj),stroop)
+m0 <- lmer(rt ~ Cong + (1|Subj),stroop)
+```
+
+```{r show-LMM-results,echo=F}
+print(summary(m1))
+print(anova(m0,m1)) ## due to current implementation in lme4, the anova() call refit the models with ML which isn't standard practice, but in practice it makes no difference
+```
+
+Next, in order to get a sense of what the marginal data likelihood as a function of $\eta$ looks like, I estimated the posterior distribution on $\eta$ using `MCMCglmm`, putting a diffuse prior on $\eta$ using the method of parameter expansion.  (It should be possible to compute the likelihood conditioned on a value of $\eta$ analytically, as described e.g. in Pinheiro & Bates 2000, section 2.2.1-2.2.5, but that would be a lot more coding effort!)  The first row of graphs below presents the sampled posterior estimate for $\eta$.  Observe that the highest posterior density matches the `lme4` results above well.  As a sanity check, the second row presents the sampled posterior estimate for the standard deviation of observation-level residual error $\sigma$; this also matches the `lme4` results.  (Note that in both the `lme4` and `MCMCglmm` implementations, I intentionally excluded the possibility of correlations between the random intercept and random slope, to keep the inferential question focused strictly on the strength of evidence for a non-zero $\eta$.)
+
+```{r fit-MCMCglmm,echo=F,cache=T}
+library(MCMCglmm)
+prior <- list( R=list(V=1,n=1),
+               G=list(G1=list(V=diag(2),n=2,alpha.mu=c(0,0),alpha.V=diag(2)*1000)))
+m.MCMCglmm <- MCMCglmm(rt ~ Cong, random=~idh(1+Cong):Subj,data=stroop,prior=prior,nitt=30000,verbose=FALSE)
+```
+
+```{r show-MCMCglmm-results,echo=F}
+plot(sqrt(m.MCMCglmm$VCV[,2:3]))
+```
+
+Note that the posterior density on $\eta$ is around six times as high at the maximum as it is in the vicinity of zero.  Because the prior in this fit was diffuse, the posterior mostly reflects the likelihood ratio.  This interpretation also comports well with the `lme4` results: $\sqrt{6}=2.44$, which is not terribly far off from the difference in log likelihood between the $\eta=0$ and unconstrained-$\eta$ models fitted in `lme4`.
+
+Finally, note that there is a large region of $\eta$ whose posterior probability density is higher than the posterior density around $\eta=0$.  Roughly speaking, let's say that this is true in the region $0<\eta<0.35$.  Based on my calculations, your truncated inverse-gamma prior on $\eta$ puts a mass of about 0.3 in that region (exclusively in the region $0.25<\eta<0.35$).  It seems to me that we should thus be able to upper-bound the Bayes Factor in favor of $\eta=0$ as $\frac{1}{0.3}$: at least 30% of the prior probability mass in the variation alternative model is on values of $\eta$ that have data likelihood at least as high as 100% of the prior probability mass of the constant Stroop effect model.  (And this is a generous upper bound given the posterior density on $\eta$ seen in the figure above!) This reasoning is, of course, at considerable odds with the results of the analysis of the Bayes Factor favoring $\eta=0$ as high as $10^{60}$.
